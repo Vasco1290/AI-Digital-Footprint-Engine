@@ -1,5 +1,6 @@
 
 # ================= IMPORTS =================
+import json
 import requests
 import pandas as pd
 import numpy as np
@@ -10,30 +11,14 @@ from bs4 import BeautifulSoup
 
 # ================= CONFIG =================
 HEADERS = {"User-Agent": "Ethical-OSINT-Research-Bot"}
-TIMEOUT = 6
+TIMEOUT = 2  # short timeout for scale
 
-# ================= PLATFORM REGISTRY =================
-# WhatsMyName-style scalable registry (can grow to 600+)
-PLATFORMS = [
-    ("GitHub", "Coding", "https://github.com/{}"),
-    ("GitLab", "Coding", "https://gitlab.com/{}"),
-    ("HuggingFace", "Tech", "https://huggingface.co/{}"),
-    ("Reddit", "Social", "https://www.reddit.com/user/{}/"),
-    ("Instagram", "Social", "https://www.instagram.com/{}/"),
-    ("X (Twitter)", "Social", "https://twitter.com/{}"),
-    ("LinkedIn", "Professional", "https://www.linkedin.com/in/{}"),
-    ("Pinterest", "Social", "https://www.pinterest.com/{}/"),
-    ("LeetCode", "Tech", "https://leetcode.com/{}"),
-    ("Codeforces", "Tech", "https://codeforces.com/profile/{}"),
-    ("Medium", "Blogging", "https://medium.com/@{}"),
-    ("Dev.to", "Blogging", "https://dev.to/{}"),
-    ("PayPal", "Finance", "https://www.paypal.me/{}"),
-    ("Hackster", "Tech", "https://www.hackster.io/{}"),
-    ("Arduino", "Tech", "https://projecthub.arduino.cc/{}"),
-]
+# ================= LOAD PLATFORM REGISTRY =================
+with open("platforms.json", "r", encoding="utf-8") as f:
+    PLATFORM_REGISTRY = json.load(f)
 
-# ================= OSINT EXISTENCE CHECK =================
-def profile_exists(url: str) -> bool:
+# ================= EXISTENCE CHECK =================
+def profile_exists(url):
     try:
         r = requests.get(
             url,
@@ -45,21 +30,20 @@ def profile_exists(url: str) -> bool:
     except requests.RequestException:
         return False
 
-# ================= SELECTIVE CONTENT EXTRACTION =================
-def extract_public_text(url: str) -> str:
+# ================= SELECTIVE TEXT EXTRACTION =================
+SAFE_ANALYSIS_SITES = {
+    "GitHub", "Medium", "Dev.to", "Reddit", "HuggingFace"
+}
+
+def extract_public_text(url):
     try:
-        r = requests.get(
-            url,
-            headers=HEADERS,
-            timeout=TIMEOUT,
-            allow_redirects=True
-        )
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         soup = BeautifulSoup(r.text, "html.parser")
         return soup.get_text(" ", strip=True)[:1200]
     except requests.RequestException:
         return ""
 
-# ================= STYLOMETRY (USER-FRIENDLY) =================
+# ================= STYLOMETRY (HUMAN-FRIENDLY) =================
 def stylometry_summary(texts):
     if not texts:
         return {
@@ -68,24 +52,22 @@ def stylometry_summary(texts):
             "communication_style": "Unknown"
         }
 
-    combined_text = " ".join(texts)
-    words = re.findall(r"\b\w+\b", combined_text)
-    sentences = re.split(r"[.!?]", combined_text)
+    text = " ".join(texts)
+    words = re.findall(r"\b\w+\b", text)
+    sentences = re.split(r"[.!?]", text)
 
-    avg_sentence_len = (
-        np.mean([len(s.split()) for s in sentences if s.strip()])
-        if sentences else 0
+    avg_sentence = np.mean(
+        [len(s.split()) for s in sentences if s.strip()]
     )
-    vocab_richness = len(set(words)) / len(words) if words else 0
 
-    if avg_sentence_len < 12:
+    if avg_sentence < 12:
         complexity = "Simple"
-    elif avg_sentence_len < 22:
+    elif avg_sentence < 22:
         complexity = "Medium"
     else:
         complexity = "Complex"
 
-    consistency = "Consistent" if vocab_richness > 0.4 else "Variable"
+    consistency = "Consistent" if len(set(words)) / len(words) > 0.4 else "Variable"
 
     return {
         "writing_consistency": consistency,
@@ -94,83 +76,68 @@ def stylometry_summary(texts):
     }
 
 # ================= STREAMLIT UI =================
-st.set_page_config(
-    page_title="Digital Footprint Intelligence Engine",
-    layout="wide"
-)
-
+st.set_page_config(page_title="Digital Footprint Intelligence Engine", layout="wide")
 st.title("🛰️ AI-Powered Digital Footprint Intelligence Engine")
 
 query = st.text_input("Enter Username / Name / Email")
 
 if query:
     rows = []
-    timeline_platforms = []
-    collected_texts = []
+    timeline = []
+    texts = []
 
-    for site, category, url_template in PLATFORMS:
-        profile_url = url_template.format(query)
+    for entry in PLATFORM_REGISTRY:
+        site = entry["site"]
+        category = entry["category"]
+        url = entry["url"].format(query)
 
-        if profile_exists(profile_url):
-            rows.append([site, query, category, profile_url])
-            timeline_platforms.append(site)
+        if profile_exists(url):
+            rows.append([site, query, category, url])
+            timeline.append(site)
 
-            # Selective deep analysis (ethical)
-            if site in {"GitHub", "Medium", "Dev.to", "Reddit", "HuggingFace"}:
-                text = extract_public_text(profile_url)
-                if text:
-                    collected_texts.append(text)
+            if site in SAFE_ANALYSIS_SITES:
+                txt = extract_public_text(url)
+                if txt:
+                    texts.append(txt)
 
     df = pd.DataFrame(
         rows,
         columns=["Site", "Name / Username", "Category", "Profile Link"]
     )
 
-    # ================= RESULTS TABLE =================
     st.subheader("🔍 OSINT Results")
     st.dataframe(df, use_container_width=True)
 
-    # ================= CATEGORY GRAPH (SMALL) =================
+    # ---------- SMALL GRAPH ----------
     if not df.empty:
         st.subheader("📊 Platform Category Distribution")
         fig, ax = plt.subplots(figsize=(4, 3))
         df["Category"].value_counts().plot(kind="bar", ax=ax)
-        ax.set_xlabel("Category")
-        ax.set_ylabel("Count")
         plt.tight_layout()
         st.pyplot(fig)
 
-    # ================= TIMELINE GRAPH =================
-    if timeline_platforms:
+    # ---------- TIMELINE ----------
+    if timeline:
         st.subheader("🕒 Digital Footprint Timeline (Relative)")
         fig2, ax2 = plt.subplots(figsize=(5, 2.5))
-        ax2.plot(
-            range(1, len(timeline_platforms) + 1),
-            range(1, len(timeline_platforms) + 1),
-            marker="o"
-        )
-        ax2.set_yticks(range(1, len(timeline_platforms) + 1))
-        ax2.set_yticklabels(timeline_platforms)
+        ax2.plot(range(len(timeline)), range(len(timeline)), marker="o")
+        ax2.set_yticks(range(len(timeline)))
+        ax2.set_yticklabels(timeline)
         ax2.set_xlabel("Discovery Order")
-        ax2.set_ylabel("Platform")
-        plt.tight_layout()
         st.pyplot(fig2)
 
-    # ================= STYLOMETRY =================
-    style_result = stylometry_summary(collected_texts)
+    # ---------- STYLOMETRY ----------
     st.subheader("✍️ Writing Style Analysis")
-    st.json(style_result)
+    style = stylometry_summary(texts)
+    st.json(style)
 
-    # ================= ANALYST SUMMARY =================
+    # ---------- ANALYST SUMMARY ----------
     st.subheader("🧠 Analyst Summary")
-    if not df.empty:
-        st.write(
-            f"The identifier **'{query}'** was discovered across "
-            f"**{len(df)} public platforms**. The footprint spans "
-            f"**{', '.join(df['Category'].unique())}** domains. "
-            f"Writing style appears **{style_result['writing_consistency']}** "
-            f"with **{style_result['language_complexity']}** language complexity. "
-            f"This assessment is based strictly on publicly available data."
-        )
-    else:
-        st.warning("No public accounts found for this identifier.")
+    st.write(
+        f"The identifier **'{query}'** was found across **{len(df)} platforms** "
+        f"from a registry of **{len(PLATFORM_REGISTRY)} sites**. "
+        f"Presence spans **{', '.join(df['Category'].unique())}** domains. "
+        f"Writing style appears **{style['writing_consistency']}** "
+        f"with **{style['language_complexity']}** language complexity."
+    )
+
