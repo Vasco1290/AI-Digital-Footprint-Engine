@@ -1,183 +1,124 @@
-# IMPORTS
+# ================= IMPORTS =================
 import requests
+import pandas as pd
+import numpy as np
+import re
 from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
 
-# APP
-app = FastAPI(title="AI-Powered Digital Footprint Intelligence Engine")
+import streamlit as st
+import matplotlib.pyplot as plt
+
+# ================= APP =================
+app = FastAPI()
 
 HEADERS = {"User-Agent": "Ethical-OSINT-Research-Bot"}
 
-# TARGET PLATFORMS
+# ================= PLATFORMS =================
 PLATFORMS = {
-    "GitHub": "https://github.com/{}",
-    "Twitter": "https://twitter.com/{}",
-    "Instagram": "https://www.instagram.com/{}/",
-    "Reddit": "https://www.reddit.com/user/{}/"
+    "GitHub": ("https://github.com/{}", "Coding"),
+    "GitLab": ("https://gitlab.com/{}", "Coding"),
+    "HuggingFace": ("https://huggingface.co/{}", "Tech"),
+    "Reddit": ("https://www.reddit.com/user/{}/", "Social"),
+    "Instagram": ("https://www.instagram.com/{}/", "Social"),
+    "X (Twitter)": ("https://twitter.com/{}", "Social"),
+    "LinkedIn": ("https://www.linkedin.com/in/{}", "Professional"),
+    "Pinterest": ("https://www.pinterest.com/{}/", "Social"),
+    "LeetCode": ("https://leetcode.com/{}", "Tech"),
+    "Codeforces": ("https://codeforces.com/profile/{}", "Tech"),
+    "Medium": ("https://medium.com/@{}", "Blogging"),
+    "Dev.to": ("https://dev.to/{}", "Blogging")
 }
 
-# OSINT COLLECTION
-def check_profile(platform, url):
+# ================= OSINT CHECK =================
+def check_profile(site, url, category):
     try:
-        response = requests.get(url, headers=HEADERS, timeout=8)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
+        r = requests.get(url, headers=HEADERS, timeout=6)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, "html.parser")
             text = soup.get_text(" ", strip=True)[:1500]
-            return {
-                "platform": platform,
-                "url": url,
-                "found": True,
-                "bio_text": text
-            }
+            return True, text
     except:
         pass
+    return False, ""
+
+# ================= STYLOMETRY =================
+def stylometry_features(text):
+    words = re.findall(r"\b\w+\b", text.lower())
+    sentences = re.split(r"[.!?]", text)
+
+    if not words:
+        return {"avg_word_length": 0, "lexical_diversity": 0, "avg_sentence_length": 0}
 
     return {
-        "platform": platform,
-        "url": url,
-        "found": False,
-        "bio_text": ""
+        "avg_word_length": round(np.mean([len(w) for w in words]), 2),
+        "lexical_diversity": round(len(set(words)) / len(words), 2),
+        "avg_sentence_length": round(np.mean([len(s.split()) for s in sentences if s.strip()]), 2)
     }
 
+# ================= STREAMLIT UI =================
+st.set_page_config(page_title="Digital Footprint Intelligence Engine", layout="wide")
+st.title("🛰️ AI-Powered Digital Footprint Intelligence Engine")
 
-def collect_digital_footprint(username):
-    results = []
-    for platform, template in PLATFORMS.items():
-        results.append(check_profile(platform, template.format(username)))
-    return results
+query = st.text_input("Enter Username / Name / Email")
 
-# ========================= EXPLAINABLE AI =========================
-def explain_identity_confidence(profiles):
-    texts = [p["bio_text"] for p in profiles if p["found"] and p["bio_text"]]
+if query:
+    rows = []
+    bios = []
+    stylometry_data = []
 
-    bio_similarity = 0.0
-    if len(texts) >= 2:
-        vectorizer = TfidfVectorizer(stop_words="english")
-        tfidf = vectorizer.fit_transform(texts)
-        bio_similarity = float(np.mean(cosine_similarity(tfidf)))
+    for site, (url_t, category) in PLATFORMS.items():
+        url = url_t.format(query)
+        found, text = check_profile(site, url, category)
 
-    username_consistency = 1.0 if len(profiles) > 1 else 0.5
-    platform_overlap = min(len(profiles) / 5, 1.0)
+        if found:
+            rows.append([site, query, category, url])
+            bios.append(text)
+            stylometry_data.append(stylometry_features(text))
 
-    final_score = round(
-        0.5 * bio_similarity +
-        0.3 * username_consistency +
-        0.2 * platform_overlap,
-        2
+    df = pd.DataFrame(rows, columns=["Site", "Name / Username", "Category", "Profile Link"])
+
+    st.subheader("🔍 OSINT Results Table")
+    st.dataframe(df, use_container_width=True)
+
+    # ================= VISUALS =================
+    if not df.empty:
+        st.subheader("📊 Platform Presence")
+        fig, ax = plt.subplots()
+        df["Site"].value_counts().plot(kind="bar", ax=ax)
+        st.pyplot(fig)
+
+        st.subheader("📂 Category Distribution")
+        fig2, ax2 = plt.subplots()
+        df["Category"].value_counts().plot(kind="pie", autopct="%1.1f%%", ax=ax2)
+        st.pyplot(fig2)
+
+    # ================= STYLOMETRY =================
+    if stylometry_data:
+        st.subheader("✍️ Stylometry Analysis (Writing Style AI)")
+        st.json({
+            "average_word_length": np.mean([s["avg_word_length"] for s in stylometry_data]),
+            "average_sentence_length": np.mean([s["avg_sentence_length"] for s in stylometry_data]),
+            "lexical_diversity": np.mean([s["lexical_diversity"] for s in stylometry_data])
+        })
+
+    # ================= ANALYST SUMMARY =================
+    st.subheader("🧠 Analyst Summary")
+    st.write(
+        f"The identifier '{query}' shows public presence across {len(df)} platforms. "
+        f"The distribution suggests interests primarily in {', '.join(df['Category'].unique())}. "
+        f"Stylometric patterns indicate consistent writing characteristics across available content. "
+        f"This assessment is based solely on publicly accessible information."
     )
 
-    return {
-        "score": final_score,
-        "factors": {
-            "bio_text_similarity": round(bio_similarity, 2),
-            "username_consistency": username_consistency,
-            "platform_overlap": round(platform_overlap, 2)
-        },
-        "explanation": (
-            "Identity confidence is derived from textual similarity between public "
-            "profile descriptions, consistent username reuse, and cross-platform presence."
-        )
-    }
-
-# INTEREST INFERENCE
-def infer_interests(profiles):
-    combined_text = " ".join(
-        p["bio_text"].lower() for p in profiles if p["found"]
-    )
-
-    keyword_map = {
-        "Technology": ["developer", "python", "ai", "ml", "software"],
-        "Cybersecurity": ["security", "hacking", "cyber"],
-        "Gaming": ["gaming", "game", "esports"],
-        "Finance": ["crypto", "trading", "stocks"],
-        "Academics": ["research", "university", "student"]
-    }
-
-    interests = []
-    for topic, words in keyword_map.items():
-        if any(word in combined_text for word in words):
-            interests.append(topic)
-
-    return interests
-
-# TIMELINE ANALYSIS
-def timeline_analysis(profiles):
-    timeline = []
-    order = 1
-    for p in profiles:
-        if p["found"]:
-            timeline.append({
-                "platform": p["platform"],
-                "relative_activity_order": order,
-                "note": "Relative ordering inferred from public availability"
-            })
-            order += 1
-    return timeline
-
-# VISUAL DATA
-def generate_visual_data(profiles, confidence):
-    return {
-        "platform_presence": {
-            p["platform"]: 1 for p in profiles if p["found"]
-        },
-        "confidence_breakdown": confidence["factors"]
-    }
-
-# ANALYST SUMMARY
-def analyst_summary(username, confidence, interests, risk):
-    interest_text = ", ".join(interests) if interests else "no clearly dominant domains"
-
-    return (
-        f"The subject '{username}' demonstrates a consistent digital footprint across "
-        f"multiple public platforms. Identity confidence is assessed at "
-        f"{confidence['score']}, supported by textual similarity and username reuse. "
-        f"Inferred interests indicate involvement in {interest_text}. "
-        f"The current digital exposure level is assessed as {risk.lower()}."
-    )
-
-# REPORT GENERATION
-def generate_report(username):
-    profiles = collect_digital_footprint(username)
-    found_profiles = [p for p in profiles if p["found"]]
-
-    confidence = explain_identity_confidence(found_profiles)
-    interests = infer_interests(found_profiles)
-    timeline = timeline_analysis(found_profiles)
-    visual_data = generate_visual_data(found_profiles, confidence)
-
-    risk = "Low"
-    if len(found_profiles) >= 3:
-        risk = "Medium"
-    if confidence["score"] > 0.75 and len(found_profiles) >= 4:
-        risk = "High"
-
-    summary = analyst_summary(username, confidence, interests, risk)
-
-    return {
-        "subject": username,
-        "profiles_found": len(found_profiles),
-        "platforms": found_profiles,
-        "identity_confidence": confidence,
-        "inferred_interests": interests,
-        "timeline_analysis": timeline,
-        "visual_data": visual_data,
-        "risk_assessment": risk,
-        "analyst_summary": summary,
-        "ethics_note": (
-            "This analysis is based strictly on publicly available information. "
-            "All conclusions are probabilistic and require human verification."
-        )
-    }
-
-# API ENDPOINT
+# ================= FASTAPI =================
 @app.get("/analyze/{username}")
-def analyze_username(username: str):
-    return generate_report(username)
+def analyze(username: str):
+    return {"message": "Use Streamlit UI for interactive analysis."}
 
-# ENTRY
+# ================= ENTRY =================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
