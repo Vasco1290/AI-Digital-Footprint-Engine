@@ -1,0 +1,13 @@
+[
+  { "site": "GitHub", "category": "Tech", "url": "https://github.com/{}" },
+  { "site": "GitLab", "category": "Tech", "url": "https://gitlab.com/{}" },
+  { "site": "HuggingFace", "category": "Tech", "url": "https://huggingface.co/{}" },
+  { "site": "Reddit", "category": "Social", "url": "https://www.reddit.com/user/{}/" },
+  { "site": "Instagram", "category": "Social", "url": "https://www.instagram.com/{}/" },
+  { "site": "X (Twitter)", "category": "Social", "url": "https://twitter.com/{}" },
+  { "site": "LinkedIn", "category": "Professional", "url": "https://www.linkedin.com/in/{}" },
+  { "site": "Pinterest", "category": "Social", "url": "https://www.pinterest.com/{}/" },
+  { "site": "LeetCode", "category": "Tech", "url": "https://leetcode.com/{}" },
+  { "site": "Medium", "category": "Blogging", "url": "https://medium.com/@{}" },
+  { "site": "Dev.to", "category": "Blogging", "url": "https://dev.to/{}" }
+]

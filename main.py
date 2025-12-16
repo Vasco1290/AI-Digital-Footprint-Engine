@@ -1,5 +1,5 @@
-
 # ================= IMPORTS =================
+import os
 import json
 import requests
 import pandas as pd
@@ -8,17 +8,30 @@ import re
 import streamlit as st
 import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ================= CONFIG =================
 HEADERS = {"User-Agent": "Ethical-OSINT-Research-Bot"}
-TIMEOUT = 2  # short timeout for scale
+TIMEOUT = 2
+MAX_WORKERS = 25   # controls speed vs safety
 
-# ================= LOAD PLATFORM REGISTRY =================
-with open("platforms.json", "r", encoding="utf-8") as f:
-    PLATFORM_REGISTRY = json.load(f)
+# ================= LOAD ALL REGISTRIES =================
+def load_platform_registries(folder="registries"):
+    platforms = []
+    for file in os.listdir(folder):
+        if file.endswith(".json"):
+            with open(os.path.join(folder, file), "r", encoding="utf-8") as f:
+                platforms.extend(json.load(f))
+    return platforms
 
-# ================= EXISTENCE CHECK =================
-def profile_exists(url):
+PLATFORM_REGISTRY = load_platform_registries()
+
+# ================= OSINT EXISTENCE CHECK =================
+def check_platform(entry, query):
+    site = entry["site"]
+    category = entry["category"]
+    url = entry["url"].format(query)
+
     try:
         r = requests.get(
             url,
@@ -26,11 +39,14 @@ def profile_exists(url):
             timeout=TIMEOUT,
             allow_redirects=True
         )
-        return r.status_code == 200
+        if r.status_code == 200:
+            return (site, query, category, url)
     except requests.RequestException:
-        return False
+        pass
 
-# ================= SELECTIVE TEXT EXTRACTION =================
+    return None
+
+# ================= SELECTIVE CONTENT EXTRACTION =================
 SAFE_ANALYSIS_SITES = {
     "GitHub", "Medium", "Dev.to", "Reddit", "HuggingFace"
 }
@@ -40,10 +56,10 @@ def extract_public_text(url):
         r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         soup = BeautifulSoup(r.text, "html.parser")
         return soup.get_text(" ", strip=True)[:1200]
-    except requests.RequestException:
+    except:
         return ""
 
-# ================= STYLOMETRY (HUMAN-FRIENDLY) =================
+# ================= STYLOMETRY =================
 def stylometry_summary(texts):
     if not texts:
         return {
@@ -56,21 +72,17 @@ def stylometry_summary(texts):
     words = re.findall(r"\b\w+\b", text)
     sentences = re.split(r"[.!?]", text)
 
-    avg_sentence = np.mean(
-        [len(s.split()) for s in sentences if s.strip()]
-    )
+    avg_sentence = np.mean([len(s.split()) for s in sentences if s.strip()])
+    vocab_ratio = len(set(words)) / len(words)
 
-    if avg_sentence < 12:
-        complexity = "Simple"
-    elif avg_sentence < 22:
+    complexity = "Simple"
+    if avg_sentence > 12:
         complexity = "Medium"
-    else:
+    if avg_sentence > 22:
         complexity = "Complex"
 
-    consistency = "Consistent" if len(set(words)) / len(words) > 0.4 else "Variable"
-
     return {
-        "writing_consistency": consistency,
+        "writing_consistency": "Consistent" if vocab_ratio > 0.4 else "Variable",
         "language_complexity": complexity,
         "communication_style": "Technical / Informational"
     }
@@ -79,36 +91,37 @@ def stylometry_summary(texts):
 st.set_page_config(page_title="Digital Footprint Intelligence Engine", layout="wide")
 st.title("🛰️ AI-Powered Digital Footprint Intelligence Engine")
 
+st.caption(f"Loaded {len(PLATFORM_REGISTRY)} platforms")
+
 query = st.text_input("Enter Username / Name / Email")
 
 if query:
-    rows = []
-    timeline = []
+    results = []
     texts = []
+    timeline = []
 
-    for entry in PLATFORM_REGISTRY:
-        site = entry["site"]
-        category = entry["category"]
-        url = entry["url"].format(query)
+    with st.spinner("Scanning platforms (multithreaded)..."):
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [
+                executor.submit(check_platform, entry, query)
+                for entry in PLATFORM_REGISTRY
+            ]
 
-        if profile_exists(url):
-            rows.append([site, query, category, url])
-            timeline.append(site)
-
-            if site in SAFE_ANALYSIS_SITES:
-                txt = extract_public_text(url)
-                if txt:
-                    texts.append(txt)
+            for future in as_completed(futures):
+                res = future.result()
+                if res:
+                    results.append(res)
+                    timeline.append(res[0])
 
     df = pd.DataFrame(
-        rows,
+        results,
         columns=["Site", "Name / Username", "Category", "Profile Link"]
     )
 
     st.subheader("🔍 OSINT Results")
     st.dataframe(df, use_container_width=True)
 
-    # ---------- SMALL GRAPH ----------
+    # ---------- SMALL CATEGORY GRAPH ----------
     if not df.empty:
         st.subheader("📊 Platform Category Distribution")
         fig, ax = plt.subplots(figsize=(4, 3))
@@ -124,20 +137,26 @@ if query:
         ax2.set_yticks(range(len(timeline)))
         ax2.set_yticklabels(timeline)
         ax2.set_xlabel("Discovery Order")
+        plt.tight_layout()
         st.pyplot(fig2)
 
     # ---------- STYLOMETRY ----------
-    st.subheader("✍️ Writing Style Analysis")
+    for site, _, _, link in results:
+        if site in SAFE_ANALYSIS_SITES:
+            txt = extract_public_text(link)
+            if txt:
+                texts.append(txt)
+
     style = stylometry_summary(texts)
+    st.subheader("✍️ Writing Style Analysis")
     st.json(style)
 
     # ---------- ANALYST SUMMARY ----------
     st.subheader("🧠 Analyst Summary")
     st.write(
-        f"The identifier **'{query}'** was found across **{len(df)} platforms** "
+        f"The identifier **'{query}'** was found on **{len(df)} platforms** "
         f"from a registry of **{len(PLATFORM_REGISTRY)} sites**. "
         f"Presence spans **{', '.join(df['Category'].unique())}** domains. "
         f"Writing style appears **{style['writing_consistency']}** "
         f"with **{style['language_complexity']}** language complexity."
     )
-
