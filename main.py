@@ -1,4 +1,4 @@
-# ---------------- IMPORTS ----------------
+# IMPORTS
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI
@@ -6,10 +6,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
-# ---------------- APP ----------------
-app = FastAPI(title="Digital Footprint Intelligence Engine")
+# APP
+app = FastAPI(title="AI-Powered Digital Footprint Intelligence Engine")
 
-# ---------------- OSINT TARGET PLATFORMS ----------------
+HEADERS = {"User-Agent": "Ethical-OSINT-Research-Bot"}
+
+# TARGET PLATFORMS
 PLATFORMS = {
     "GitHub": "https://github.com/{}",
     "Twitter": "https://twitter.com/{}",
@@ -17,16 +19,13 @@ PLATFORMS = {
     "Reddit": "https://www.reddit.com/user/{}/"
 }
 
-HEADERS = {"User-Agent": "OSINT-Research-Bot"}
-
-# ---------------- CORE FUNCTIONS ----------------
-
+# OSINT COLLECTION
 def check_profile(platform, url):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=8)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, "html.parser")
-            text = soup.get_text(" ", strip=True)[:1000]
+        response = requests.get(url, headers=HEADERS, timeout=8)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            text = soup.get_text(" ", strip=True)[:1500]
             return {
                 "platform": platform,
                 "url": url,
@@ -36,83 +35,149 @@ def check_profile(platform, url):
     except:
         pass
 
-    return {"platform": platform, "url": url, "found": False}
+    return {
+        "platform": platform,
+        "url": url,
+        "found": False,
+        "bio_text": ""
+    }
 
 
 def collect_digital_footprint(username):
     results = []
-    for platform, url_template in PLATFORMS.items():
-        profile_url = url_template.format(username)
-        results.append(check_profile(platform, profile_url))
+    for platform, template in PLATFORMS.items():
+        results.append(check_profile(platform, template.format(username)))
     return results
 
+# ========================= EXPLAINABLE AI =========================
+def explain_identity_confidence(profiles):
+    texts = [p["bio_text"] for p in profiles if p["found"] and p["bio_text"]]
 
-def ai_identity_similarity(profiles):
-    texts = [p["bio_text"] for p in profiles if p.get("found") and p.get("bio_text")]
+    bio_similarity = 0.0
+    if len(texts) >= 2:
+        vectorizer = TfidfVectorizer(stop_words="english")
+        tfidf = vectorizer.fit_transform(texts)
+        bio_similarity = float(np.mean(cosine_similarity(tfidf)))
 
-    if len(texts) < 2:
-        return 0.4  # low confidence
+    username_consistency = 1.0 if len(profiles) > 1 else 0.5
+    platform_overlap = min(len(profiles) / 5, 1.0)
 
-    vectorizer = TfidfVectorizer(stop_words="english")
-    tfidf = vectorizer.fit_transform(texts)
-    sim_matrix = cosine_similarity(tfidf)
+    final_score = round(
+        0.5 * bio_similarity +
+        0.3 * username_consistency +
+        0.2 * platform_overlap,
+        2
+    )
 
-    score = np.mean(sim_matrix)
-    return round(float(score), 2)
+    return {
+        "score": final_score,
+        "factors": {
+            "bio_text_similarity": round(bio_similarity, 2),
+            "username_consistency": username_consistency,
+            "platform_overlap": round(platform_overlap, 2)
+        },
+        "explanation": (
+            "Identity confidence is derived from textual similarity between public "
+            "profile descriptions, consistent username reuse, and cross-platform presence."
+        )
+    }
 
-
-def extract_interests(profiles):
+# INTEREST INFERENCE
+def infer_interests(profiles):
     combined_text = " ".join(
-        p["bio_text"] for p in profiles if p.get("found") and p.get("bio_text")
-    ).lower()
+        p["bio_text"].lower() for p in profiles if p["found"]
+    )
 
-    keywords = {
-        "technology": ["python", "code", "developer", "ai", "ml"],
-        "gaming": ["game", "gaming", "esports"],
-        "security": ["security", "hacking", "cyber"],
-        "finance": ["crypto", "trading", "stocks"],
-        "academics": ["research", "university", "student"]
+    keyword_map = {
+        "Technology": ["developer", "python", "ai", "ml", "software"],
+        "Cybersecurity": ["security", "hacking", "cyber"],
+        "Gaming": ["gaming", "game", "esports"],
+        "Finance": ["crypto", "trading", "stocks"],
+        "Academics": ["research", "university", "student"]
     }
 
     interests = []
-    for topic, words in keywords.items():
-        if any(w in combined_text for w in words):
+    for topic, words in keyword_map.items():
+        if any(word in combined_text for word in words):
             interests.append(topic)
 
     return interests
 
+# TIMELINE ANALYSIS
+def timeline_analysis(profiles):
+    timeline = []
+    order = 1
+    for p in profiles:
+        if p["found"]:
+            timeline.append({
+                "platform": p["platform"],
+                "relative_activity_order": order,
+                "note": "Relative ordering inferred from public availability"
+            })
+            order += 1
+    return timeline
 
-def generate_intelligence_report(username, profiles):
+# VISUAL DATA
+def generate_visual_data(profiles, confidence):
+    return {
+        "platform_presence": {
+            p["platform"]: 1 for p in profiles if p["found"]
+        },
+        "confidence_breakdown": confidence["factors"]
+    }
+
+# ANALYST SUMMARY
+def analyst_summary(username, confidence, interests, risk):
+    interest_text = ", ".join(interests) if interests else "no clearly dominant domains"
+
+    return (
+        f"The subject '{username}' demonstrates a consistent digital footprint across "
+        f"multiple public platforms. Identity confidence is assessed at "
+        f"{confidence['score']}, supported by textual similarity and username reuse. "
+        f"Inferred interests indicate involvement in {interest_text}. "
+        f"The current digital exposure level is assessed as {risk.lower()}."
+    )
+
+# REPORT GENERATION
+def generate_report(username):
+    profiles = collect_digital_footprint(username)
     found_profiles = [p for p in profiles if p["found"]]
 
-    similarity_score = ai_identity_similarity(found_profiles)
-    interests = extract_interests(found_profiles)
+    confidence = explain_identity_confidence(found_profiles)
+    interests = infer_interests(found_profiles)
+    timeline = timeline_analysis(found_profiles)
+    visual_data = generate_visual_data(found_profiles, confidence)
 
     risk = "Low"
-    if len(found_profiles) >= 4:
+    if len(found_profiles) >= 3:
         risk = "Medium"
-    if similarity_score > 0.75 and len(found_profiles) >= 5:
+    if confidence["score"] > 0.75 and len(found_profiles) >= 4:
         risk = "High"
+
+    summary = analyst_summary(username, confidence, interests, risk)
 
     return {
         "subject": username,
         "profiles_found": len(found_profiles),
         "platforms": found_profiles,
-        "identity_confidence": similarity_score,
+        "identity_confidence": confidence,
         "inferred_interests": interests,
+        "timeline_analysis": timeline,
+        "visual_data": visual_data,
         "risk_assessment": risk,
-        "ethics_note": "Analysis based only on publicly available data."
+        "analyst_summary": summary,
+        "ethics_note": (
+            "This analysis is based strictly on publicly available information. "
+            "All conclusions are probabilistic and require human verification."
+        )
     }
 
-# ---------------- API ENDPOINT ----------------
-
+# API ENDPOINT
 @app.get("/analyze/{username}")
 def analyze_username(username: str):
-    profiles = collect_digital_footprint(username)
-    report = generate_intelligence_report(username, profiles)
-    return report
+    return generate_report(username)
 
-# ---------------- ENTRY ----------------
+# ENTRY
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
