@@ -1,124 +1,176 @@
+
 # ================= IMPORTS =================
 import requests
 import pandas as pd
 import numpy as np
 import re
-from bs4 import BeautifulSoup
-from fastapi import FastAPI
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-
 import streamlit as st
 import matplotlib.pyplot as plt
+from bs4 import BeautifulSoup
 
-# ================= APP =================
-app = FastAPI()
-
+# ================= CONFIG =================
 HEADERS = {"User-Agent": "Ethical-OSINT-Research-Bot"}
+TIMEOUT = 6
 
-# ================= PLATFORMS =================
-PLATFORMS = {
-    "GitHub": ("https://github.com/{}", "Coding"),
-    "GitLab": ("https://gitlab.com/{}", "Coding"),
-    "HuggingFace": ("https://huggingface.co/{}", "Tech"),
-    "Reddit": ("https://www.reddit.com/user/{}/", "Social"),
-    "Instagram": ("https://www.instagram.com/{}/", "Social"),
-    "X (Twitter)": ("https://twitter.com/{}", "Social"),
-    "LinkedIn": ("https://www.linkedin.com/in/{}", "Professional"),
-    "Pinterest": ("https://www.pinterest.com/{}/", "Social"),
-    "LeetCode": ("https://leetcode.com/{}", "Tech"),
-    "Codeforces": ("https://codeforces.com/profile/{}", "Tech"),
-    "Medium": ("https://medium.com/@{}", "Blogging"),
-    "Dev.to": ("https://dev.to/{}", "Blogging")
-}
+# ================= PLATFORM REGISTRY =================
+# WhatsMyName-style scalable registry (can grow to 600+)
+PLATFORMS = [
+    ("GitHub", "Coding", "https://github.com/{}"),
+    ("GitLab", "Coding", "https://gitlab.com/{}"),
+    ("HuggingFace", "Tech", "https://huggingface.co/{}"),
+    ("Reddit", "Social", "https://www.reddit.com/user/{}/"),
+    ("Instagram", "Social", "https://www.instagram.com/{}/"),
+    ("X (Twitter)", "Social", "https://twitter.com/{}"),
+    ("LinkedIn", "Professional", "https://www.linkedin.com/in/{}"),
+    ("Pinterest", "Social", "https://www.pinterest.com/{}/"),
+    ("LeetCode", "Tech", "https://leetcode.com/{}"),
+    ("Codeforces", "Tech", "https://codeforces.com/profile/{}"),
+    ("Medium", "Blogging", "https://medium.com/@{}"),
+    ("Dev.to", "Blogging", "https://dev.to/{}"),
+    ("PayPal", "Finance", "https://www.paypal.me/{}"),
+    ("Hackster", "Tech", "https://www.hackster.io/{}"),
+    ("Arduino", "Tech", "https://projecthub.arduino.cc/{}"),
+]
 
-# ================= OSINT CHECK =================
-def check_profile(site, url, category):
+# ================= OSINT EXISTENCE CHECK =================
+def profile_exists(url: str) -> bool:
     try:
-        r = requests.get(url, headers=HEADERS, timeout=6)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, "html.parser")
-            text = soup.get_text(" ", strip=True)[:1500]
-            return True, text
-    except:
-        pass
-    return False, ""
+        r = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=TIMEOUT,
+            allow_redirects=True
+        )
+        return r.status_code == 200
+    except requests.RequestException:
+        return False
 
-# ================= STYLOMETRY =================
-def stylometry_features(text):
-    words = re.findall(r"\b\w+\b", text.lower())
-    sentences = re.split(r"[.!?]", text)
+# ================= SELECTIVE CONTENT EXTRACTION =================
+def extract_public_text(url: str) -> str:
+    try:
+        r = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=TIMEOUT,
+            allow_redirects=True
+        )
+        soup = BeautifulSoup(r.text, "html.parser")
+        return soup.get_text(" ", strip=True)[:1200]
+    except requests.RequestException:
+        return ""
 
-    if not words:
-        return {"avg_word_length": 0, "lexical_diversity": 0, "avg_sentence_length": 0}
+# ================= STYLOMETRY (USER-FRIENDLY) =================
+def stylometry_summary(texts):
+    if not texts:
+        return {
+            "writing_consistency": "Insufficient data",
+            "language_complexity": "Unknown",
+            "communication_style": "Unknown"
+        }
+
+    combined_text = " ".join(texts)
+    words = re.findall(r"\b\w+\b", combined_text)
+    sentences = re.split(r"[.!?]", combined_text)
+
+    avg_sentence_len = (
+        np.mean([len(s.split()) for s in sentences if s.strip()])
+        if sentences else 0
+    )
+    vocab_richness = len(set(words)) / len(words) if words else 0
+
+    if avg_sentence_len < 12:
+        complexity = "Simple"
+    elif avg_sentence_len < 22:
+        complexity = "Medium"
+    else:
+        complexity = "Complex"
+
+    consistency = "Consistent" if vocab_richness > 0.4 else "Variable"
 
     return {
-        "avg_word_length": round(np.mean([len(w) for w in words]), 2),
-        "lexical_diversity": round(len(set(words)) / len(words), 2),
-        "avg_sentence_length": round(np.mean([len(s.split()) for s in sentences if s.strip()]), 2)
+        "writing_consistency": consistency,
+        "language_complexity": complexity,
+        "communication_style": "Technical / Informational"
     }
 
 # ================= STREAMLIT UI =================
-st.set_page_config(page_title="Digital Footprint Intelligence Engine", layout="wide")
+st.set_page_config(
+    page_title="Digital Footprint Intelligence Engine",
+    layout="wide"
+)
+
 st.title("🛰️ AI-Powered Digital Footprint Intelligence Engine")
 
 query = st.text_input("Enter Username / Name / Email")
 
 if query:
     rows = []
-    bios = []
-    stylometry_data = []
+    timeline_platforms = []
+    collected_texts = []
 
-    for site, (url_t, category) in PLATFORMS.items():
-        url = url_t.format(query)
-        found, text = check_profile(site, url, category)
+    for site, category, url_template in PLATFORMS:
+        profile_url = url_template.format(query)
 
-        if found:
-            rows.append([site, query, category, url])
-            bios.append(text)
-            stylometry_data.append(stylometry_features(text))
+        if profile_exists(profile_url):
+            rows.append([site, query, category, profile_url])
+            timeline_platforms.append(site)
 
-    df = pd.DataFrame(rows, columns=["Site", "Name / Username", "Category", "Profile Link"])
+            # Selective deep analysis (ethical)
+            if site in {"GitHub", "Medium", "Dev.to", "Reddit", "HuggingFace"}:
+                text = extract_public_text(profile_url)
+                if text:
+                    collected_texts.append(text)
 
-    st.subheader("🔍 OSINT Results Table")
+    df = pd.DataFrame(
+        rows,
+        columns=["Site", "Name / Username", "Category", "Profile Link"]
+    )
+
+    # ================= RESULTS TABLE =================
+    st.subheader("🔍 OSINT Results")
     st.dataframe(df, use_container_width=True)
 
-    # ================= VISUALS =================
+    # ================= CATEGORY GRAPH (SMALL) =================
     if not df.empty:
-        st.subheader("📊 Platform Presence")
-        fig, ax = plt.subplots()
-        df["Site"].value_counts().plot(kind="bar", ax=ax)
+        st.subheader("📊 Platform Category Distribution")
+        fig, ax = plt.subplots(figsize=(4, 3))
+        df["Category"].value_counts().plot(kind="bar", ax=ax)
+        ax.set_xlabel("Category")
+        ax.set_ylabel("Count")
+        plt.tight_layout()
         st.pyplot(fig)
 
-        st.subheader("📂 Category Distribution")
-        fig2, ax2 = plt.subplots()
-        df["Category"].value_counts().plot(kind="pie", autopct="%1.1f%%", ax=ax2)
+    # ================= TIMELINE GRAPH =================
+    if timeline_platforms:
+        st.subheader("🕒 Digital Footprint Timeline (Relative)")
+        fig2, ax2 = plt.subplots(figsize=(5, 2.5))
+        ax2.plot(
+            range(1, len(timeline_platforms) + 1),
+            range(1, len(timeline_platforms) + 1),
+            marker="o"
+        )
+        ax2.set_yticks(range(1, len(timeline_platforms) + 1))
+        ax2.set_yticklabels(timeline_platforms)
+        ax2.set_xlabel("Discovery Order")
+        ax2.set_ylabel("Platform")
+        plt.tight_layout()
         st.pyplot(fig2)
 
     # ================= STYLOMETRY =================
-    if stylometry_data:
-        st.subheader("✍️ Stylometry Analysis (Writing Style AI)")
-        st.json({
-            "average_word_length": np.mean([s["avg_word_length"] for s in stylometry_data]),
-            "average_sentence_length": np.mean([s["avg_sentence_length"] for s in stylometry_data]),
-            "lexical_diversity": np.mean([s["lexical_diversity"] for s in stylometry_data])
-        })
+    style_result = stylometry_summary(collected_texts)
+    st.subheader("✍️ Writing Style Analysis")
+    st.json(style_result)
 
     # ================= ANALYST SUMMARY =================
     st.subheader("🧠 Analyst Summary")
-    st.write(
-        f"The identifier '{query}' shows public presence across {len(df)} platforms. "
-        f"The distribution suggests interests primarily in {', '.join(df['Category'].unique())}. "
-        f"Stylometric patterns indicate consistent writing characteristics across available content. "
-        f"This assessment is based solely on publicly accessible information."
-    )
-
-# ================= FASTAPI =================
-@app.get("/analyze/{username}")
-def analyze(username: str):
-    return {"message": "Use Streamlit UI for interactive analysis."}
-
-# ================= ENTRY =================
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    if not df.empty:
+        st.write(
+            f"The identifier **'{query}'** was discovered across "
+            f"**{len(df)} public platforms**. The footprint spans "
+            f"**{', '.join(df['Category'].unique())}** domains. "
+            f"Writing style appears **{style_result['writing_consistency']}** "
+            f"with **{style_result['language_complexity']}** language complexity. "
+            f"This assessment is based strictly on publicly available data."
+        )
+    else:
+        st.warning("No public accounts found for this identifier.")
